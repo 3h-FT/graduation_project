@@ -1,0 +1,77 @@
+name: graduation_project CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: myuser
+          POSTGRES_PASSWORD: mypassword
+          POSTGRES_DB: myapp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U myuser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      selenium-hub:
+        image: selenium/standalone-chrome
+        options: --shm-size="2g"
+
+    env:
+      SELENIUM_DRIVER_URL: http://selenium-hub:4444/wd/hub
+
+    steps:
+      - name: コードをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Ruby をセットアップ
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.2.2
+          bundler-cache: true
+
+      - name: Gemをインストール
+        run: bundle install --jobs 4 --retry 3
+
+      - name: .env を作成
+        run: |
+          echo "RAILS_ENV=test" >> .env
+          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" >> .env
+          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
+          echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env
+          echo "GMAIL_USERNAME=${{ secrets.GMAIL_USERNAME }}" >> .env
+          echo "GMAIL_PASSWORD=${{ secrets.GMAIL_PASSWORD }}" >> .env
+          echo "OPENAI_ACCESS_TOKEN=${{ secrets.OPENAI_ACCESS_TOKEN }}" >> .env
+          echo "SELENIUM_DRIVER_URL=http://selenium-hub:4444/wd/hub" >> .env
+          echo "CI=true" >> .env
+
+      - name: Docker Compose プロジェクトを起動
+        run: docker compose up -d --build
+
+      - name: tmp と log ディレクトリを作成＆権限付与
+        run: |
+          mkdir -p tmp log
+          chmod -R 777 tmp log
+
+      - name: データベースをセットアップ
+        run: docker compose exec -T web bin/rails db:prepare
+
+      - name: RSpecテストを実行
+        run: docker compose exec web bundle exec rspec
+
+      - name: RuboCopを実行
+        run: docker compose exec web bundle exec rubocop
